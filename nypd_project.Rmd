@@ -1,0 +1,134 @@
+---
+title: "NYPD Shooting Incident Data Report"
+author: "Nassim Oulhadj"
+date: "2025-02-12"
+header-includes:
+  \usepackage{fvextra}
+  \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Libraries
+The libraries I used.
+```{r libraries, message=FALSE}
+library("tidyverse")
+library("lubridate")
+```
+## Importing
+Importing and reading in the NYPD shooting incident data from the csv.
+```{r read_data}
+url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+raw_nypd_data <- read_csv(url,show_col_types = FALSE)
+
+summary(raw_nypd_data)
+```
+## Tidying
+Tidying the data into 2 variables that contain a standardized date and victim's sex for the shootings, which will come into play later. One of the variables is concerned with non-lethal shootings while the other is not. These 2 data sets will be used for all models and visualizations going forward. The data is also ordered by date.
+```{r tidy_data}
+live_nypd_data <- raw_nypd_data %>% filter(STATISTICAL_MURDER_FLAG==FALSE) %>% select(OCCUR_DATE, VIC_SEX) %>% drop_na()
+live_nypd_data$OCCUR_DATE <- mdy(live_nypd_data$OCCUR_DATE)
+live_nypd_data[order(as.Date(live_nypd_data$OCCUR_DATE, format="%m/%d/%Y")),]
+
+dead_nypd_data <- raw_nypd_data %>% filter(STATISTICAL_MURDER_FLAG==TRUE) %>% select(OCCUR_DATE, VIC_SEX) %>% drop_na()
+dead_nypd_data$OCCUR_DATE <- mdy(dead_nypd_data$OCCUR_DATE)
+dead_nypd_data[order(as.Date(dead_nypd_data$OCCUR_DATE, format="%m/%d/%Y")),]
+
+summary(live_nypd_data)
+summary(dead_nypd_data)
+```
+## Total Lethal and Nonlethal Shootings in New York
+I first want to take a look at just the number of people who were shot per year and model both how many people were shot each year but also the cumulative number in order to see the growth. 
+### Transforming
+Both data sets are converted into a time series where the victim's sex is ignored and the number of shootings every year are grouped and counted.
+```{r transform_total}
+live_ts <- live_nypd_data %>% group_by(OCCUR_DATE) %>% summarize(COUNT=n()) %>% ungroup()
+live_ts$OCCUR_DATE <- live_ts$OCCUR_DATE %>% year()
+live_ts <- live_ts %>% group_by(OCCUR_DATE) %>% summarize(COUNT=n()) %>% ungroup()
+
+dead_ts <- dead_nypd_data %>% group_by(OCCUR_DATE) %>% summarize(COUNT=n()) %>% ungroup()
+dead_ts$OCCUR_DATE <- dead_ts$OCCUR_DATE %>% year()
+dead_ts <- dead_ts %>% group_by(OCCUR_DATE) %>% summarize(COUNT=n()) %>% ungroup()
+
+head(live_ts)
+head(dead_ts)
+```
+### Visualization and Analysis
+Each of the 2 data sets were converted into graphs with the same scales for deaths per year. It can be seen that nonlethal shootings are consistently higher than lethal shootings for any given year as well as relatively consistent, but around 2020 the number of lethal shootings grew significantly. This may be due to either the COVID-19 pandemic or political tensions with a new president. 
+```{r visualize_total}
+ggplot() + geom_bar(data = live_ts, aes(x=OCCUR_DATE, y=COUNT), stat="identity") + labs(title = "Nonlethal Shootings in New York by Year", y = "Number of Victims", x = "Year") + ylim(0, 500)
+
+ggplot() + geom_bar(data = dead_ts, aes(x=OCCUR_DATE, y=COUNT), stat="identity") + labs(title = "Lethal Shootings in New York by Year", y = "Number of Victims", x = "Year") + ylim(0, 500)
+
+```
+
+### Modeling
+
+To do a proper analysis and prediction for the number of shootings both the data sets were ran through a linear regression model that compares the correlation between the number of shootings and year. The bars are converted to points for easier visualization. This model actually predicts that over time, and despite the spike in 2020, the likelihood of being involved in either a lethal or nonlethal shooting is going down year after year. This is however a weak correlation.
+```{r prediction_model}
+live_mod <- lm(COUNT ~ OCCUR_DATE, data=live_ts)
+
+dead_mod <- lm(COUNT ~ OCCUR_DATE, data=dead_ts)
+
+summary(live_mod)
+summary(dead_mod)
+
+live_preds <- live_ts %>% mutate(live_pred=predict(live_mod))
+live_preds %>% ggplot() + geom_point(aes(x=OCCUR_DATE,y=COUNT)) + geom_line(aes(x=OCCUR_DATE,y=live_pred)) + labs(title = "Linear Regression Prediction of Nonlethal Shootings in New York by Year", y = "Number of Victims", x = "Year") + ylim(0,360)
+
+dead_preds <- dead_ts %>% mutate(dead_pred=predict(dead_mod))
+dead_preds %>% ggplot() + geom_point(aes(x=OCCUR_DATE,y=COUNT)) + geom_line(aes(x=OCCUR_DATE,y=dead_pred)) + ylim(0,360) + labs(title = "Linear Regression Prediction of Lethal Shootings in New York by Year", y = "Number of Victims", x = "Year")
+```
+
+## Percentage Change Between Lethal and Nonlethal Shootings by Year
+After determining that the chances of being involved in a lethal or nonlethal shooting in New York are slowly decreasing, I decided to analyze the percentage change by year between the 2 groups to see if anything striking pops out.
+### Transforming
+Calculating the percentage change each year.
+```{r transform_percentage}
+live_perc <- live_ts %>% mutate(perc_change=((COUNT/lag(COUNT)-1)*100))
+
+dead_perc <- dead_ts %>% mutate(perc_change=((COUNT/lag(COUNT)-1)*100))
+```
+### Visualization and Analysis
+The 2 data sets were converted into line graphs showing the percentage change in shootings from the previous year. It can be seen that nonlethal shootings has a relatively flat percentage change which makes sense as having consistently high shooting rates per year allows for little fluctuation. Lethal shootings had percentage changes that fluctuated wildly both up and down. The 2020 spike is present in both graphs but far more in lethal shootings. This would be interesting to follow up on as despite the rates on average going down over the course of time, this spike made it far more dangerous.
+```{r visualize_percentage}
+ggplot() + geom_line(data=live_perc[-1,],aes(x=OCCUR_DATE, y=perc_change)) + labs(title = "Percentage Change of Nonlethal Shootings in New York", x="Year", y="Percentage Change in Number of Victims") + ylim(-30, 70)
+
+ggplot() + geom_line(data=dead_perc[-1,],aes(x=OCCUR_DATE, y=perc_change)) + labs(title = "Percentage Change of Lethal Shootings in New York", x="Year", y="Percentage Change in Number of Victims")  + ylim(-30, 70)
+```
+## Change In Lethal and Nonlethal Shootings by Sex
+Next I thought it would be interesting to see the differences between the sexes and trends in their shooting data.
+### Transforming
+The data is filtered and split by sex from the original 2 variables thus making 4 variables for whether the shootings were fatal and the victim's sex. These variables are time series that group all the shootings by year.
+```{r transform_sex}
+live_male <- live_nypd_data %>% filter(VIC_SEX == "M") %>% group_by(OCCUR_DATE) %>% summarize(COUNT=n()) %>% ungroup()
+live_male$OCCUR_DATE <- live_male$OCCUR_DATE %>% year()
+live_male <- live_male %>% group_by(OCCUR_DATE) %>% summarize(COUNT=n()) %>% ungroup()
+
+live_female <- live_nypd_data %>% filter(VIC_SEX == "F") %>% group_by(OCCUR_DATE) %>% summarize(COUNT=n()) %>% ungroup()
+live_female$OCCUR_DATE <- live_female$OCCUR_DATE %>% year()
+live_female <- live_female %>% group_by(OCCUR_DATE) %>% summarize(COUNT=n()) %>% ungroup()
+
+dead_male <- dead_nypd_data %>% filter(VIC_SEX == "M") %>% group_by(OCCUR_DATE) %>% summarize(COUNT=n()) %>% ungroup()
+dead_male$OCCUR_DATE <- dead_male$OCCUR_DATE %>% year()
+dead_male <- dead_male %>% group_by(OCCUR_DATE) %>% summarize(COUNT=n()) %>% ungroup()
+
+dead_female <- dead_nypd_data %>% filter(VIC_SEX == "F") %>% group_by(OCCUR_DATE) %>% summarize(COUNT=n()) %>% ungroup()
+dead_female$OCCUR_DATE <- dead_female$OCCUR_DATE %>% year()
+dead_female <- dead_female %>% group_by(OCCUR_DATE) %>% summarize(COUNT=n()) %>% ungroup()
+
+```
+
+### Visualization and Analysis
+The male and female data sets for each respective shooting type are placed on bar graphs with the same scales and overlaid to show their trends together. Males are far more likely across the board to get shot than females, but the proportional change from lethal to nonlethal is higher for women than men. When women get shot they are far more likely to be involved in nonfatal shootings.
+```{r visualize_sex}
+ggplot() + geom_bar(data=live_male, aes(x=OCCUR_DATE, y=COUNT, color="Male"), stat="identity") + geom_bar(data=live_female, aes(x=OCCUR_DATE, y=COUNT, color="Female"), stat="identity")  + labs(title = "Yearly Nonlethal Shootings in New York by Sex", y = "Number of Victims", x = "Year") + ylim(0,360)
+
+ggplot() + geom_bar(data=dead_male, aes(x=OCCUR_DATE, y=COUNT, color="Male"), stat="identity") + geom_bar(data=dead_female, aes(x=OCCUR_DATE, y=COUNT, color="Female"), stat="identity")  + labs(title = "Yearly Lethal Shootings in New York by Sex", y = "Number of Victims", x = "Year") + ylim(0,360)
+```
+## Bias
+This data was obtained from a reliable government source and collected by the New York Police Department. Potential bias may lie in the collection methods used by the NYPD and if the data reported is reflective of reality. Certain areas are notorious for being over or under policed and whether or not all shootings were both reported to the police and recorded by them is unknown.

@@ -1,0 +1,108 @@
+---
+title: "COVID-19 Data Report"
+author: "Nassim Oulhadj"
+date: "2025-03-01"
+header-includes:
+  \usepackage{fvextra}
+  \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen = 999)
+```
+
+## Libraries
+The libraries I used.
+```{r libraries, message=FALSE}
+library("tidyverse")
+library("lubridate")
+```
+## Importing
+Importing and reading in the data from the 4 relevant csv files into a variable for each.
+```{r read_data}
+url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+
+file_names <- c("time_series_covid19_confirmed_global.csv", "time_series_covid19_deaths_global.csv", "time_series_covid19_confirmed_US.csv", "time_series_covid19_deaths_US.csv")
+
+urls <- str_c(url_in, file_names)
+
+global_cases <- read_csv(urls[1],show_col_types = FALSE)
+global_deaths <- read_csv(urls[2],show_col_types = FALSE)
+US_cases <- read_csv(urls[3],show_col_types = FALSE)
+US_deaths <- read_csv(urls[4],show_col_types = FALSE)
+```
+## Tidying and Transforming Global Data
+The global data is tidied and transformed into one variable that contains the number of cases, the number of deaths, the date, and the respective country. The date was standardized and ordered.
+```{r tidy_global}
+global_cases <- global_cases %>% pivot_longer(cols = 
+-c("Province/State","Country/Region", Lat, Long), names_to = "date", values_to = "cases") %>% select(-c(Lat,Long,"Province/State")) %>% mutate(date = mdy(date))
+
+global_deaths <- global_deaths %>% pivot_longer(cols = 
+-c("Province/State","Country/Region", Lat, Long), names_to = "date", values_to = "deaths") %>% select(-c(Lat,Long,"Province/State")) %>% mutate(date = mdy(date))
+
+global <- global_cases %>% full_join(global_deaths) %>% rename(Country_Region = "Country/Region") %>% filter(cases > 0)
+
+summary(global)
+
+```
+## Visualizing and Analysis of Global Data
+The global data is shown with both cases and dates. As seen the number of cases dwarfs the deaths by COVID-19 so a graph for simply the deaths is provided to better visualize the data. The 2 data sets appear to follow a similar proportional pattern of growth until about 2022 where there was a sharp increase in infections. This however does not appear to be reflected in deaths and may be due to people understanding the disease and how to treat it better as opposed to earlier in the pandemic. 
+```{r visualize_global}
+global %>% ggplot() + geom_line(aes(x=date, y=cases, color="Cases")) + geom_line(aes(x=date, y=deaths, color="Deaths")) + labs(title= "Total Global COVID-19 Cases vs Deaths", y="Number of Affected People")
+
+global %>% ggplot() + geom_line(aes(x=date, y=deaths, color="Deaths")) + labs(title= "Total Global COVID-19 Deaths", y="Number of Affected People", x="Date")
+```
+## Tidying and Transforming US data
+For curiosity sake the same process was done for US data. The data was tidied and transformed the same way as in the lecture.
+```{r tidy_US}
+US_cases <- US_cases %>% pivot_longer(cols =
+-(UID:Combined_Key), names_to = "date", values_to = "cases") %>% select(-c(Lat,Long_)) %>% select(Admin2:cases) %>% mutate(date = mdy(date))
+
+US_deaths <- US_deaths %>% pivot_longer(cols = 
+-(UID:Population), names_to = "date", values_to = "deaths") %>% select(-c(Lat,Long_)) %>% select(Admin2:deaths) %>% mutate(date = mdy(date))
+
+US <- US_cases %>% full_join((US_deaths)) %>% filter(cases > 0)
+```
+
+## Visualizing and Analysis of US Data
+The same visualization for global data was performed for US data. One interesting takeaway is how sharp of a spike there is in growth for both cases and deaths in 2021. This steep rise is not reflected in the global data and may be due to the way the virus spread and rates of transmision. Additionally, the sharp rise in 2022 is reflected the same way for global data as US data which further prompts the question of what happened in 2022? 
+```{r visualize_US}
+US %>% ggplot() + geom_line(aes(x=date, y=cases, color="Cases")) + geom_line(aes(x=date, y=deaths, color="Deaths")) + labs(title= "Total US COVID-19 Cases vs Deaths", y="Number of Affected People")
+
+US %>% ggplot() + geom_line(aes(x=date, y=deaths, color="Deaths")) + labs(title= "Total US COVID-19 Deaths", y="Number of Affected People", x="Date")
+```
+
+## Comparing Morocco and Algeria
+I thought it would be interesting, as a Moroccan, to compare the data on cases and deaths for Morocco and our cultural rival Algeria. The 2 countries having similar population makes looking directly at the number of cases and deaths more applicable.
+### Tidying and Visualizing
+The data for Morocco and Algeria are filtered out and placed into a graph for cases and a graph for deaths showing both countries. Despite Algeria having a slightly higher population, Morocco far surpasses them in both cases and deaths. The data may be misconstrued however as the tapering of data around 2022 for cases shows that Algeria may have stopped reporting data and leads credence to believe they have been undereporting. Both Morocco and Algeria appeared to stop reporting data for deaths in 2022 but even looking before then Morocco is consistently ahead except for the begining of the pandemic. If the data is all valid then these results might be due to Algeria being a wealthier country than Morocco, but there is a likely possability that Algeria is misreporting their COVID-19 data.
+```{r tidy_comparison}
+morocco <- global %>% filter(Country_Region=="Morocco") 
+
+algeria <- global %>% filter(Country_Region=="Algeria")
+
+ggplot() + geom_line(data=morocco, aes(x=date,y=cases, color="Morocco")) + geom_line(data=algeria, aes(x=date,y=cases, color="Algeria"))
+
+ggplot() + geom_line(data=morocco, aes(x=date,y=deaths, color="Morocco")) + geom_line(data=algeria, aes(x=date,y=deaths, color="Algeria"))
+
+```
+
+### Modeling
+Lastly, I compared the cases in Morocco versus Algeria to determine any correlation by using a linear regression model. We can determine that the 2 are highly correlated with a high R-squared of 0.99. This makes sense as the 2 countries are neighbors that routinely interact with each other.
+```{r model}
+mormex <- merge(morocco, algeria, by = "date")
+
+mod <- lm(cases.x ~ cases.y, data = mormex)
+summary(mod)
+
+predictions <- mormex %>% mutate(pred=predict(mod))
+
+predictions %>% ggplot() + geom_point(aes(x = cases.x, y = cases.y, color = "Data")) + 
+  geom_line(aes(x = cases.x, y = pred, color = "Prediciton"))
+```
+## Bias
+This data was obtained from a reliable source and collected by Johns Hopkins University. Potential bias may lie in the collection and reporting methods used by the respective countries. There is already potential for misreporting when looking at Algeria's data and this may be present in any given country. 
